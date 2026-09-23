@@ -117,10 +117,10 @@ function checkWebhook(req, d) {
   const auth = req.get('authorization');
   const sig = req.get('x-signature');
   const authOk = Boolean(BEMOVIL_SECRET_KEY) && auth === `Bearer ${BEMOVIL_SECRET_KEY}`;
-  // Igual que la referencia de BeMovil: `${id}.${reference}.${Amount.amount}`
+  // `${id}.${reference}.${Amount.amount}`; BeMovil firma con la referencia vacía si no viene
   const expected = crypto
     .createHmac('sha256', BEMOVIL_SECRET_KEY ?? '')
-    .update(`${d.id}.${d.reference}.${d.Amount?.amount}`)
+    .update(`${d.id}.${d.reference ?? ''}.${d.Amount?.amount}`)
     .digest('hex');
   const a = Buffer.from(sig ?? '');
   const b = Buffer.from(expected);
