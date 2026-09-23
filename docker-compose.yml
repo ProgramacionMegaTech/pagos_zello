@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: bemobil
+      POSTGRES_PASSWORD: bemobil
+      POSTGRES_DB: bemobil
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bemobil"]
+      interval: 5s
+      retries: 10
+
+  server:
+    build: ./server
+    env_file: .env
+    environment:
+      DATABASE_URL: postgres://bemobil:bemobil@db:5432/bemobil
+    depends_on:
+      db:
+        condition: service_healthy
+    volumes:
+      - ./logs:/app/logs
+    ports:
+      - "127.0.0.1:4000:4000"
+
+volumes:
+  pgdata:

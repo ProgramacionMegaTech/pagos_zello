@@ -1,0 +1,6 @@
+.app { max-width: 420px; margin: 2rem auto; font-family: system-ui, sans-serif; }
+form { display: flex; flex-direction: column; gap: .75rem; }
+input, textarea, button { padding: .6rem; font-size: 1rem; }
+button { cursor: pointer; }
+.error { color: #c00; }
+.result { margin-top: 1.5rem; display: flex; flex-direction: column; gap: .5rem; }
