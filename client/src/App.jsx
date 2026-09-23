@@ -1,15 +1,21 @@
-import { useEffect, useRef, useState } from 'react';
+import { useState } from 'react';
 import './App.css';
+import Resultado from './Resultado.jsx';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 const empty = { name: '', label: '', description: '', price: '' };
 
 export default function App() {
+  if (window.location.pathname === '/resultado') return <Resultado />;
+  return <Home />;
+}
+
+function Home() {
   const [form, setForm] = useState(empty);
-  const [payment, setPayment] = useState(null);
+  const [payments, setPayments] = useState(null);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
-  const timer = useRef();
+  const [querying, setQuerying] = useState(false);
 
   const set = (k) => (e) => setForm({ ...form, [k]: e.target.value });
 
@@ -27,7 +33,7 @@ export default function App() {
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'Error');
-      setPayment(data);
+      setForm(empty);
       if (tab) tab.location.href = data.checkout_url;
       else window.location.href = data.checkout_url;
     } catch (err) {
@@ -38,15 +44,19 @@ export default function App() {
     }
   }
 
-  // Consulta el estado cada 5s mientras esté pendiente
-  useEffect(() => {
-    if (!payment || payment.status !== 'PENDING') return;
-    timer.current = setInterval(async () => {
-      const r = await fetch(`${API}/api/payments/${payment.id}`);
-      if (r.ok) setPayment(await r.json());
-    }, 5000);
-    return () => clearInterval(timer.current);
-  }, [payment]);
+  async function consultar() {
+    setQuerying(true);
+    setError('');
+    try {
+      const r = await fetch(`${API}/api/payments`);
+      if (!r.ok) throw new Error('No se pudo consultar');
+      setPayments(await r.json());
+    } catch (err) {
+      setError(err.message);
+    } finally {
+      setQuerying(false);
+    }
+  }
 
   return (
     <main className="app">
@@ -59,14 +69,31 @@ export default function App() {
         <button disabled={loading}>{loading ? 'Generando…' : 'Generar link'}</button>
       </form>
       {error && <p className="error">{error}</p>}
-      {payment && (
-        <section className="result">
-          <p>Estado: <strong>{payment.status}</strong></p>
-          <button onClick={() => window.open(payment.checkout_url, '_blank', 'noopener')}>
-            Realizar pago
-          </button>
-        </section>
-      )}
+
+      <section className="result">
+        <button onClick={consultar} disabled={querying}>
+          {querying ? 'Consultando…' : 'Consultar últimas transacciones'}
+        </button>
+        {payments && (payments.length === 0 ? (
+          <p>No hay transacciones.</p>
+        ) : (
+          <table>
+            <thead>
+              <tr><th>Nombre</th><th>Descripción</th><th>Valor</th><th>Estado</th></tr>
+            </thead>
+            <tbody>
+              {payments.map((p) => (
+                <tr key={p.id}>
+                  <td>{p.name}</td>
+                  <td>{p.description}</td>
+                  <td>{Number(p.price).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}</td>
+                  <td>{p.status}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        ))}
+      </section>
     </main>
   );
 }

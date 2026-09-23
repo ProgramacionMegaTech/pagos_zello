@@ -42,6 +42,8 @@ app.post('/api/payments', async (req, res) => {
     return res.status(400).json({ error: 'name, label y price (> 0) son obligatorios' });
   }
 
+  // ref: identifica el pago al volver del checkout (va en el redirectUrl)
+  const ref = crypto.randomUUID();
   const payload = {
     isDefault: false,
     isUniquePayment: true,
@@ -51,7 +53,7 @@ app.post('/api/payments', async (req, res) => {
     description: description ?? '',
     price: amount,
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(), // expira a los 15 min
-    redirectUrl: `${CLIENT_URL}/?resultado=1`,
+    redirectUrl: `${CLIENT_URL}/resultado?ref=${ref}`,
     confirmUrl: PUBLIC_URL ? `${PUBLIC_URL}/api/webhooks/bemovil` : '',
     additionalData: [],
   };
@@ -70,15 +72,33 @@ app.post('/api/payments', async (req, res) => {
 
     const checkoutUrl = `${CHECKOUT_HOST}/${resource.resourceKey}`;
     const { rows } = await pool.query(
-      `INSERT INTO payments (resource_key, bemovil_id, name, label, description, price, checkout_url)
-       VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING *`,
-      [resource.resourceKey, resource.id, name, label, payload.description, amount, checkoutUrl],
+      `INSERT INTO payments (resource_key, bemovil_id, name, label, description, price, checkout_url, ref)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
+      [resource.resourceKey, resource.id, name, label, payload.description, amount, checkoutUrl, ref],
     );
     res.status(201).json(rows[0]);
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error interno' });
   }
+});
+
+// Últimas transacciones
+app.get('/api/payments', async (_req, res) => {
+  const { rows } = await pool.query(
+    'SELECT id, name, description, price, status, created_at FROM payments ORDER BY created_at DESC LIMIT 20',
+  );
+  res.json(rows);
+});
+
+// Resultado para la página de retorno (solo campos públicos)
+app.get('/api/payments/ref/:ref', async (req, res) => {
+  const { rows } = await pool.query(
+    'SELECT name, description, price, status, updated_at FROM payments WHERE ref = $1',
+    [req.params.ref],
+  );
+  if (!rows[0]) return res.status(404).json({ error: 'No encontrado' });
+  res.json(rows[0]);
 });
 
 // 2) Verificar estado del pago (estado local, actualizado por el webhook)
