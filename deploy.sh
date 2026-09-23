@@ -9,7 +9,7 @@ git pull --ff-only
 docker compose up -d --build
 
 # Cliente
-(cd client && npm ci && npm run build)
+(cd client && npm ci --include=dev && npm run build)
 sudo mkdir -p /var/www/pagos
 sudo rsync -a --delete client/dist/ /var/www/pagos/dist/
 

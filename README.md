@@ -112,7 +112,7 @@ El webhook queda en `https://pagos.zello.com.co/api/webhooks/bemovil` (se envía
    El script hace `git pull`, reconstruye y reinicia backend y base de datos (`docker compose up -d --build`), compila el cliente y lo publica en `/var/www/pagos/dist`.
 
 Casos particulares:
-- **Solo cambió el cliente:** `cd client && npm ci && npm run build && sudo rsync -a --delete dist/ /var/www/pagos/dist/`
+- **Solo cambió el cliente:** `cd client && npm ci --include=dev && npm run build && sudo rsync -a --delete dist/ /var/www/pagos/dist/`
 - **Solo cambió el backend o `.env`:** `docker compose up -d --build`
 - **Cambió `deploy/nginx.conf`:** copiarlo de nuevo a `/etc/nginx/conf.d/`, ejecutar `sudo nginx -t && sudo systemctl reload nginx` y revisar que certbot no haya añadido bloques que se pierdan al sobrescribir (mejor editar el archivo instalado a mano).
 - **Ver logs:** `docker compose logs -f server` y `tail -f logs/webhook.log`.
