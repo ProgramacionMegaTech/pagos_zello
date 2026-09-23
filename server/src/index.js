@@ -59,6 +59,9 @@ app.post('/api/payments', async (req, res) => {
     expiresAt: new Date(Date.now() + 15 * 60 * 1000).toISOString(), // expira a los 15 min
     redirectUrl: `${CLIENT_URL}/resultado?ref=${ref}`,
     confirmUrl: PUBLIC_URL ? `${PUBLIC_URL}/api/webhooks/bemovil` : '',
+    // BeMovil devuelve _id y meta tal cual en el webhook: sirven para identificar el pago
+    _id: ref,
+    meta: { ref },
     additionalData: [],
   };
 
@@ -141,20 +144,34 @@ app.post('/api/webhooks/bemovil', async (req, res) => {
   const status = String(d.TransactionStatus?.name ?? 'UNKNOWN').toUpperCase();
   const amount = Number(d.Amount?.amount);
 
-  // Enlace con el pago: por reference (= resourceKey) o transaction_id ya conocido;
-  // si no viene, se usa el único pago PENDIENTE con el mismo monto.
-  const { rowCount } = await pool.query(
-    `UPDATE payments SET status=$1, transaction_id=$2, last_webhook=$3, updated_at=now()
-     WHERE id = (
-       SELECT id FROM payments
-       WHERE transaction_id = $2 OR resource_key = $4
-          OR (status = 'PENDING' AND price = $5 AND transaction_id IS NULL
-              AND (SELECT count(*) FROM payments WHERE status='PENDING' AND price=$5 AND transaction_id IS NULL) = 1)
-       ORDER BY created_at DESC LIMIT 1
-     )`,
-    [status, d.id, req.body, d.reference ?? null, amount],
-  );
-  logWebhook(req, true, { matchedPayment: rowCount > 0 });
+  // Enlace con el pago, del criterio más fiable al menos fiable:
+  // 1) ref propio devuelto por BeMovil (_id / meta.ref), 2) transaction_id ya conocido,
+  // 3) reference = resourceKey, 4) único pago PENDING con el mismo monto (heurístico).
+  const ref = d._id ?? d.meta?.ref ?? null;
+  const set = 'status=$1, transaction_id=$2, last_webhook=$3, matched_by=$4, updated_at=now()';
+  const attempts = [
+    ['ref', ref && 'ref = $5', ref],
+    ['transaction_id', 'transaction_id = $5', d.id],
+    ['reference', d.reference && 'resource_key = $5', d.reference],
+    [
+      'amount',
+      Number.isFinite(amount) &&
+        `status='PENDING' AND transaction_id IS NULL AND price = $5
+         AND (SELECT count(*) FROM payments WHERE status='PENDING' AND transaction_id IS NULL AND price = $5) = 1`,
+      amount,
+    ],
+  ];
+  let matchedBy = null;
+  for (const [by, where, value] of attempts) {
+    if (!where) continue;
+    const r = await pool.query(
+      `UPDATE payments SET ${set} WHERE id = (SELECT id FROM payments WHERE ${where} ORDER BY created_at DESC LIMIT 1)`,
+      [status, d.id, req.body, by, value],
+    );
+    if (r.rowCount) { matchedBy = by; break; }
+  }
+  const rowCount = matchedBy ? 1 : 0;
+  logWebhook(req, true, { matchedPayment: rowCount > 0, matchedBy });
   if (!rowCount) console.warn('Webhook sin pago asociado', d.id);
   res.status(200).json({ ok: true });
 });
