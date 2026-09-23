@@ -33,6 +33,7 @@ function Home() {
       });
       const data = await r.json();
       if (!r.ok) throw new Error(data.error || 'Error');
+      console.log('Respuesta de BeMovil:', data.bemovil);
       setForm(empty);
       if (tab) tab.location.href = data.checkout_url;
       else window.location.href = data.checkout_url;

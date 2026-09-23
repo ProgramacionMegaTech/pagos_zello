@@ -80,7 +80,7 @@ app.post('/api/payments', async (req, res) => {
        VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
       [resource.resourceKey, resource.id, name, label, payload.description, amount, checkoutUrl, ref],
     );
-    res.status(201).json(rows[0]);
+    res.status(201).json({ ...rows[0], bemovil: body }); // bemovil: respuesta original de BeMovil
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'Error interno' });
