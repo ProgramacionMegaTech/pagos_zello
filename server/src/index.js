@@ -17,13 +17,17 @@ const {
 const LOG_FILE = process.env.WEBHOOK_LOG_FILE ?? '/app/logs/webhook.log';
 fs.mkdirSync(LOG_FILE.replace(/\/[^/]+$/, ''), { recursive: true });
 
-// Una línea JSON por notificación recibida (auditoría). No guarda el token.
+// Una línea JSON por notificación recibida (auditoría): headers, cuerpo crudo y
+// payload interpretado. El header Authorization no se guarda (solo si coincide).
 function logWebhook(req, valid, extra = {}) {
+  const { authorization, ...headers } = req.headers;
   const line = JSON.stringify({
     receivedAt: new Date().toISOString(),
     ip: req.ip,
     signatureValid: valid,
-    signature: req.get('x-signature') ?? null,
+    hasAuthorization: Boolean(authorization),
+    headers,
+    rawBody: req.rawBody ?? null,
     payload: req.body ?? null,
     ...extra,
   });
@@ -32,7 +36,7 @@ function logWebhook(req, valid, extra = {}) {
 
 const app = express();
 app.use(cors({ origin: CLIENT_URL }));
-app.use(express.json());
+app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); } }));
 
 // 1) Generar link de pago
 app.post('/api/payments', async (req, res) => {
@@ -109,26 +113,28 @@ app.get('/api/payments/:id', async (req, res) => {
 });
 
 // Webhook confirmUrl
-function validSignature(req, d) {
+function checkWebhook(req, d) {
   const auth = req.get('authorization');
   const sig = req.get('x-signature');
-  if (!BEMOVIL_SECRET_KEY || !sig || auth !== `Bearer ${BEMOVIL_SECRET_KEY}`) return false;
+  const authOk = Boolean(BEMOVIL_SECRET_KEY) && auth === `Bearer ${BEMOVIL_SECRET_KEY}`;
   // Igual que la referencia de BeMovil: `${id}.${reference}.${Amount.amount}`
   const expected = crypto
-    .createHmac('sha256', BEMOVIL_SECRET_KEY)
+    .createHmac('sha256', BEMOVIL_SECRET_KEY ?? '')
     .update(`${d.id}.${d.reference}.${d.Amount?.amount}`)
     .digest('hex');
-  const a = Buffer.from(sig);
+  const a = Buffer.from(sig ?? '');
   const b = Buffer.from(expected);
-  return a.length === b.length && crypto.timingSafeEqual(a, b);
+  const sigOk = Boolean(sig) && a.length === b.length && crypto.timingSafeEqual(a, b);
+  return { valid: authOk && sigOk, authOk, sigOk, hasSignature: Boolean(sig) };
 }
 
 app.post('/api/webhooks/bemovil', async (req, res) => {
   const d = req.body?.data ?? {};
-  const valid = validSignature(req, d);
+  const check = checkWebhook(req, d);
+  const valid = check.valid;
   await pool.query('INSERT INTO webhook_logs (payload, signature_valid) VALUES ($1,$2)', [req.body ?? {}, valid]);
   if (!valid) {
-    logWebhook(req, false);
+    logWebhook(req, false, { authOk: check.authOk, signatureOk: check.sigOk, hasSignature: check.hasSignature });
     return res.status(401).json({ ok: false });
   }
 

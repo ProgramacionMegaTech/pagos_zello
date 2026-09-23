@@ -58,11 +58,11 @@ Arquitectura: nginx (ya instalado en el servidor) sirve el cliente estático en 
 Requisitos en el servidor: Docker + Compose, Node.js 20+, git, nginx y certbot.
 
 1. **DNS:** registro `A` de `pagos.zello.com.co` apuntando a la IP del servidor.
-2. **Código:** clonar el repositorio en el servidor (por ejemplo en `/opt/bemobil`):
+2. **Código:** clonar el repositorio en el servidor (por ejemplo en `/root/pagos_zello`):
    ```bash
-   sudo git clone <URL_DEL_REPO> /opt/bemobil
-   sudo chown -R $USER /opt/bemobil
-   cd /opt/bemobil
+   sudo git clone <URL_DEL_REPO> /root/pagos_zello
+   sudo chown -R $USER /root/pagos_zello
+   cd /root/pagos_zello
    ```
 3. **Variables de entorno:**
    ```bash
@@ -106,7 +106,7 @@ El webhook queda en `https://pagos.zello.com.co/api/webhooks/bemovil` (se envía
 1. En local: desarrollar y probar, luego `git commit` y `git push`.
 2. En el servidor:
    ```bash
-   cd /opt/bemobil
+   cd /root/pagos_zello
    ./deploy.sh
    ```
    El script hace `git pull`, reconstruye y reinicia backend y base de datos (`docker compose up -d --build`), compila el cliente y lo publica en `/var/www/pagos/dist`.
