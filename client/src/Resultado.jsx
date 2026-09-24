@@ -17,6 +17,7 @@ export default function Resultado() {
   const [checking, setChecking] = useState(false);
   const intentos = useRef(0);
   const timer = useRef();
+  const activo = useRef(true);
 
   // Consulta el estado de la transacción en BeMovil
   const consultar = useCallback(async () => {
@@ -35,21 +36,29 @@ export default function Resultado() {
     }
   }, [ref]);
 
+  // Consulta y reintenta cada 3 s (~1 min) mientras siga pendiente.
+  // En la carga inicial, Nequi Push (requiresManualCheck) espera a que el usuario confirme;
+  // con "Ya realicé el pago" (confirmado = true) sí se reintenta solo.
+  const ciclo = useCallback(async (confirmado = false) => {
+    clearTimeout(timer.current);
+    if (confirmado) intentos.current = 0;
+    const data = await consultar();
+    if (!data || !activo.current) return;
+    if (data.requiresManualCheck && !confirmado) return;
+    if (data.status === 'PENDING' && ++intentos.current < MAX_INTENTOS) {
+      timer.current = setTimeout(() => ciclo(confirmado), 3000);
+    }
+  }, [consultar]);
+
   useEffect(() => {
     if (!ref) return;
-    let activo = true;
-    // Al cargar: consulta y, si sigue pendiente, reintenta solo (Nequi Push espera confirmación manual)
-    const ciclo = async () => {
-      const data = await consultar();
-      if (!activo || !data || data.requiresManualCheck) return;
-      if (data.status === 'PENDING' && ++intentos.current < MAX_INTENTOS) timer.current = setTimeout(ciclo, 3000);
-    };
+    activo.current = true;
     ciclo();
     return () => {
-      activo = false;
+      activo.current = false;
       clearTimeout(timer.current);
     };
-  }, [ref, consultar]);
+  }, [ref, ciclo]);
 
   const [titulo, clase] = payment ? texto[payment.status] ?? [`Estado: ${payment.status}`, 'info'] : [];
 
@@ -65,8 +74,8 @@ export default function Resultado() {
           <p>{Number(payment.price).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}</p>
           {payment.requiresManualCheck && (
             <>
-              <p>Aprueba el pago en tu celular (Nequi) y, cuando lo hayas hecho, confirma aquí.</p>
-              <button onClick={consultar} disabled={checking}>
+              <p>Aprueba el pago en tu celular (Nequi) y, cuando lo hayas hecho, confirma aquí. Consultaremos el estado cada pocos segundos.</p>
+              <button onClick={() => ciclo(true)} disabled={checking}>
                 {checking ? 'Consultando…' : 'Ya realicé el pago'}
               </button>
             </>
