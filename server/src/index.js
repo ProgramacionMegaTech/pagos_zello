@@ -34,6 +34,10 @@ function logWebhook(req, valid, extra = {}) {
   fs.appendFile(LOG_FILE, line + '\n', (err) => err && console.error('log error', err));
 }
 
+// Un pago PENDING cuyo link ya venció se muestra como EXPIRADO
+const STATUS = `CASE WHEN status = 'PENDING' AND COALESCE(expires_at, created_at + interval '15 minutes') < now()
+  THEN 'EXPIRADO' ELSE status END AS status`;
+
 const app = express();
 app.use(cors({ origin: CLIENT_URL }));
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); } }));
@@ -79,9 +83,9 @@ app.post('/api/payments', async (req, res) => {
 
     const checkoutUrl = `${CHECKOUT_HOST}/${resource.resourceKey}`;
     const { rows } = await pool.query(
-      `INSERT INTO payments (resource_key, bemovil_id, name, label, description, price, checkout_url, ref)
-       VALUES ($1,$2,$3,$4,$5,$6,$7,$8) RETURNING *`,
-      [resource.resourceKey, resource.id, name, label, payload.description, amount, checkoutUrl, ref],
+      `INSERT INTO payments (resource_key, bemovil_id, name, label, description, price, checkout_url, ref, expires_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9) RETURNING *`,
+      [resource.resourceKey, resource.id, name, label, payload.description, amount, checkoutUrl, ref, resource.expiresAt ?? payload.expiresAt],
     );
     res.status(201).json({ ...rows[0], bemovil: body }); // bemovil: respuesta original de BeMovil
   } catch (err) {
@@ -93,24 +97,66 @@ app.post('/api/payments', async (req, res) => {
 // Últimas transacciones
 app.get('/api/payments', async (_req, res) => {
   const { rows } = await pool.query(
-    'SELECT id, name, description, price, status, created_at FROM payments ORDER BY created_at DESC LIMIT 20',
+    `SELECT id, name, description, price, ${STATUS}, created_at FROM payments ORDER BY created_at DESC LIMIT 20`,
   );
   res.json(rows);
 });
 
-// Resultado para la página de retorno (solo campos públicos)
-app.get('/api/payments/ref/:ref', async (req, res) => {
+// Guarda el estado de una transacción. Una APROBADA no se pisa con otra transacción
+// (p. ej. un rechazo tardío de otro intento); repetir la misma transacción sí es válido.
+async function applyStatus(payment, status, transactionId, matchedBy) {
+  const locked = payment.status === 'APROBADA' && payment.transaction_id !== transactionId;
+  if (!locked) {
+    await pool.query(
+      'UPDATE payments SET status=$1, transaction_id=$2, matched_by=$3, updated_at=now() WHERE id=$4',
+      [status, transactionId, matchedBy, payment.id],
+    );
+  }
+  return locked;
+}
+
+// Página de resultado: consulta el estado de la transacción en BeMovil (find) usando el _id (= ref)
+app.post('/api/payments/ref/:ref/check', async (req, res) => {
+  const { ref } = req.params;
+  const found = (await pool.query('SELECT id, status, transaction_id FROM payments WHERE ref = $1', [ref])).rows[0];
+  if (!found) return res.status(404).json({ error: 'No encontrado' });
+
+  let paymentMethodId = null;
+  try {
+    const r = await fetch(`${BEMOVIL_BASE_URL}/api/v1/transactions/find`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${BEMOVIL_TOKEN}` },
+      body: JSON.stringify({ data: { _id: ref } }),
+    });
+    const body = await r.json().catch(() => ({}));
+    const tx = body?.data?.Transaction;
+    if (tx) {
+      paymentMethodId = tx.paymentMethodId ?? tx.PaymentMethod?.id ?? null;
+      const status = String(tx.TransactionStatus?.name ?? 'UNKNOWN').toUpperCase();
+      await applyStatus(found, status, tx.id, 'find');
+    } else if (body?.errorCode !== 'transaction.notFound') {
+      // Sin transacción todavía (el usuario no ha usado el link) es normal; otro error no
+      console.error('find falló', r.status, body);
+      return res.status(502).json({ error: 'No se pudo consultar el estado' });
+    }
+  } catch (err) {
+    console.error(err);
+    return res.status(502).json({ error: 'No se pudo consultar el estado' });
+  }
+
   const { rows } = await pool.query(
-    'SELECT name, description, price, status, updated_at FROM payments WHERE ref = $1',
-    [req.params.ref],
+    `SELECT name, description, price, ${STATUS}, updated_at FROM payments WHERE id = $1`,
+    [found.id],
   );
-  if (!rows[0]) return res.status(404).json({ error: 'No encontrado' });
-  res.json(rows[0]);
+  const status = rows[0].status;
+  // Nequi Push (11): el usuario aprueba en su celular y debe confirmar para volver a consultar
+  const requiresManualCheck = paymentMethodId === 11 && /PEND|PROCES/.test(status);
+  res.json({ ...rows[0], paymentMethodId, requiresManualCheck });
 });
 
 // 2) Verificar estado del pago (estado local, actualizado por el webhook)
 app.get('/api/payments/:id', async (req, res) => {
-  const { rows } = await pool.query('SELECT * FROM payments WHERE id = $1', [req.params.id]);
+  const { rows } = await pool.query(`SELECT *, ${STATUS} FROM payments WHERE id = $1`, [req.params.id]);
   if (!rows[0]) return res.status(404).json({ error: 'No encontrado' });
   res.json(rows[0]);
 });
@@ -142,37 +188,21 @@ app.post('/api/webhooks/bemovil', async (req, res) => {
   }
 
   const status = String(d.TransactionStatus?.name ?? 'UNKNOWN').toUpperCase();
-  const amount = Number(d.Amount?.amount);
 
-  // Enlace con el pago, del criterio más fiable al menos fiable:
-  // 1) ref propio devuelto por BeMovil (_id / meta.ref), 2) transaction_id ya conocido,
-  // 3) reference = resourceKey, 4) único pago PENDING con el mismo monto (heurístico).
-  const ref = d._id ?? d.meta?.ref ?? null;
-  const set = 'status=$1, transaction_id=$2, last_webhook=$3, matched_by=$4, updated_at=now()';
-  const attempts = [
-    ['ref', ref && 'ref = $5', ref],
-    ['transaction_id', 'transaction_id = $5', d.id],
-    ['reference', d.reference && 'resource_key = $5', d.reference],
-    [
-      'amount',
-      Number.isFinite(amount) &&
-        `status='PENDING' AND transaction_id IS NULL AND price = $5
-         AND (SELECT count(*) FROM payments WHERE status='PENDING' AND transaction_id IS NULL AND price = $5) = 1`,
-      amount,
-    ],
-  ];
-  let matchedBy = null;
-  for (const [by, where, value] of attempts) {
-    if (!where) continue;
-    const r = await pool.query(
-      `UPDATE payments SET ${set} WHERE id = (SELECT id FROM payments WHERE ${where} ORDER BY created_at DESC LIMIT 1)`,
-      [status, d.id, req.body, by, value],
-    );
-    if (r.rowCount) { matchedBy = by; break; }
+  // El pago se identifica solo por _id: es el ref que enviamos al crear el link y BeMovil devuelve tal cual.
+  const ref = d._id ?? null;
+  const matchedBy = 'ref';
+  const payment = ref
+    ? (await pool.query('SELECT id, status, transaction_id FROM payments WHERE ref = $1 LIMIT 1', [String(ref)])).rows[0]
+    : null;
+
+  const locked = payment ? await applyStatus(payment, status, d.id, matchedBy) : false;
+  if (payment) await pool.query('UPDATE payments SET last_webhook=$1 WHERE id=$2', [req.body, payment.id]);
+  logWebhook(req, true, { matchedPayment: Boolean(payment), ignoredAlreadyApproved: locked });
+  if (!payment) {
+    console.warn('Webhook sin pago asociado', d.id);
+    return res.status(404).json({ ok: false, error: 'Pago no encontrado' });
   }
-  const rowCount = matchedBy ? 1 : 0;
-  logWebhook(req, true, { matchedPayment: rowCount > 0, matchedBy });
-  if (!rowCount) console.warn('Webhook sin pago asociado', d.id);
   res.status(200).json({ ok: true });
 });
 

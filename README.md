@@ -126,10 +126,12 @@ Los datos de Postgres persisten en el volumen `pgdata` (un `deploy.sh` no los bo
 |---|---|---|
 | POST | `/api/payments` | Crea el link en BeMovil y lo guarda. Body: `name`, `label`, `description`, `price`. Devuelve `checkout_url` (`https://plataforma.bepay.com.co/checkout/{resourceKey}`) |
 | GET | `/api/payments/:id` | Estado del pago (actualizado por el webhook) |
+| POST | `/api/payments/ref/:ref/check` | Consulta en BeMovil (`/api/v1/transactions/find` con `_id` = ref) el estado de la transacción y lo guarda. La usa la página `/resultado` |
 | POST | `/api/webhooks/bemovil` | Webhook de BeMovil. Valida `Authorization: Bearer {secretKey}` y `X-Signature` = HMAC-SHA256(`{id}.{reference}.{Amount.amount}`). Responde `{"ok":true}` |
 
 ## Notas
 
 - El webhook es idempotente: una notificación repetida solo vuelve a escribir el mismo estado.
-- Si el payload no trae `reference`, el pago se asocia por el único pago pendiente con el mismo monto. Revisa `matchedPayment` en `logs/webhook.log`.
+- El webhook se asocia al pago solo por `_id`: al crear el link se envía `_id` (y `meta.ref`) con un UUID propio y BeMovil lo devuelve en cada notificación. Sin `_id` la notificación no se asocia (`matchedPayment: false` en `logs/webhook.log`).
+- Un pago `PENDING` cuyo link venció (15 min) se muestra como `EXPIRADO`, y una transacción `APROBADA` no se sobrescribe con notificaciones de otros intentos.
 - No subas `.env` a git (ya está en `.gitignore`).

@@ -9,3 +9,4 @@ th, td { text-align: left; padding: .5rem; border-bottom: 1px solid #ddd; }
 .resultado { padding: 1rem; border-radius: 8px; border: 1px solid #ddd; }
 .resultado.ok { border-color: #2a9d4b; background: #eaf7ee; }
 .resultado.wait { border-color: #d9a400; background: #fff8e1; }
+.resultado.fail { border-color: #c0392b; background: #fdecea; }
