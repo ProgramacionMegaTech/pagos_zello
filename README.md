@@ -126,7 +126,6 @@ Los datos de Postgres persisten en el volumen `pgdata` (un `deploy.sh` no los bo
 |---|---|---|
 | POST | `/api/payments` | Crea el link en BeMovil y lo guarda. Body: `name`, `label`, `description`, `price`. Devuelve `checkout_url` (`https://plataforma.bepay.com.co/checkout/{resourceKey}`) |
 | GET | `/api/payments/:id` | Estado del pago (actualizado por el webhook) |
-| POST | `/api/payments/ref/:ref/check` | Consulta en BeMovil (`/api/v1/transactions/find` con `_id` = ref) el estado de la transacción y lo guarda. La usa la página `/resultado` |
 | POST | `/api/webhooks/bemovil` | Webhook de BeMovil. Valida `Authorization: Bearer {secretKey}` y `X-Signature` = HMAC-SHA256(`{id}.{reference}.{Amount.amount}`). Responde `{"ok":true}` |
 
 ## Notas
