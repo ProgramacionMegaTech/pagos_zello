@@ -38,6 +38,12 @@ function logWebhook(req, valid, extra = {}) {
 const STATUS = `CASE WHEN status = 'PENDING' AND COALESCE(expires_at, created_at + interval '15 minutes') < now()
   THEN 'EXPIRADO' ELSE status END AS status`;
 
+// Métricas de la consulta de estado: intentos y ms desde la primera consulta hasta el estado definitivo
+const METRICS = `check_attempts AS attempts,
+  CASE WHEN first_check_at IS NULL THEN NULL
+       ELSE (EXTRACT(EPOCH FROM (COALESCE(resolved_at, now()) - first_check_at)) * 1000)::bigint END AS elapsed_ms,
+  resolved_at IS NOT NULL AS resolved`;
+
 const app = express();
 app.use(cors({ origin: CLIENT_URL }));
 app.use(express.json({ verify: (req, _res, buf) => { req.rawBody = buf.toString('utf8'); } }));
@@ -97,7 +103,7 @@ app.post('/api/payments', async (req, res) => {
 // Últimas transacciones
 app.get('/api/payments', async (_req, res) => {
   const { rows } = await pool.query(
-    `SELECT id, name, description, price, ${STATUS}, created_at FROM payments ORDER BY created_at DESC LIMIT 20`,
+    `SELECT id, name, description, price, ${STATUS}, ${METRICS}, created_at FROM payments ORDER BY created_at DESC LIMIT 20`,
   );
   res.json(rows);
 });
@@ -118,7 +124,14 @@ async function applyStatus(payment, status, transactionId, matchedBy) {
 // Página de resultado: consulta el estado de la transacción en BeMovil (find) usando el _id (= ref)
 app.post('/api/payments/ref/:ref/check', async (req, res) => {
   const { ref } = req.params;
-  const found = (await pool.query('SELECT id, status, transaction_id FROM payments WHERE ref = $1', [ref])).rows[0];
+  // Cada consulta cuenta como un intento; la primera marca el inicio del cronómetro
+  const found = (
+    await pool.query(
+      `UPDATE payments SET check_attempts = check_attempts + 1, first_check_at = COALESCE(first_check_at, now())
+       WHERE ref = $1 RETURNING id, status, transaction_id`,
+      [ref],
+    )
+  ).rows[0];
   if (!found) return res.status(404).json({ error: 'No encontrado' });
 
   let paymentMethodId = null;
@@ -144,8 +157,13 @@ app.post('/api/payments/ref/:ref/check', async (req, res) => {
     return res.status(502).json({ error: 'No se pudo consultar el estado' });
   }
 
+  const current = (await pool.query(`SELECT ${STATUS} FROM payments WHERE id = $1`, [found.id])).rows[0].status;
+  // Estado definitivo recibido: se detiene el cronómetro (solo la primera vez)
+  if (current !== 'PENDING') {
+    await pool.query('UPDATE payments SET resolved_at = COALESCE(resolved_at, now()) WHERE id = $1', [found.id]);
+  }
   const { rows } = await pool.query(
-    `SELECT name, description, price, ${STATUS}, updated_at FROM payments WHERE id = $1`,
+    `SELECT name, description, price, ${STATUS}, ${METRICS}, updated_at FROM payments WHERE id = $1`,
     [found.id],
   );
   const status = rows[0].status;

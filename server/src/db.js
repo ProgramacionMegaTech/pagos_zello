@@ -22,6 +22,9 @@ export async function initDb() {
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS ref TEXT UNIQUE;
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS matched_by TEXT;
     ALTER TABLE payments ADD COLUMN IF NOT EXISTS expires_at TIMESTAMPTZ;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS check_attempts INTEGER NOT NULL DEFAULT 0;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS first_check_at TIMESTAMPTZ;
+    ALTER TABLE payments ADD COLUMN IF NOT EXISTS resolved_at TIMESTAMPTZ;
     CREATE TABLE IF NOT EXISTS webhook_logs (
       id SERIAL PRIMARY KEY,
       payload JSONB,

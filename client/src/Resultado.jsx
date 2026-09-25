@@ -15,9 +15,7 @@ export default function Resultado() {
   const [payment, setPayment] = useState(null);
   const [error, setError] = useState(ref ? '' : 'Falta la referencia del pago.');
   const [checking, setChecking] = useState(false);
-  const [consultas, setConsultas] = useState(0); // total de peticiones de estado
-  const [inicio, setInicio] = useState(null); // momento de la primera petición
-  const [fin, setFin] = useState(null); // momento en que llegó un estado definitivo
+  const [recibidoEn, setRecibidoEn] = useState(0); // cuándo llegó la última respuesta (para el reloj local)
   const [ahora, setAhora] = useState(() => Date.now());
   const intentos = useRef(0);
   const timer = useRef();
@@ -26,15 +24,13 @@ export default function Resultado() {
   // Consulta el estado de la transacción en BeMovil
   const consultar = useCallback(async () => {
     setChecking(true);
-    setInicio((t) => t ?? Date.now());
-    setConsultas((n) => n + 1);
     try {
       const r = await fetch(`${API}/api/payments/ref/${encodeURIComponent(ref)}/check`, { method: 'POST' });
       if (!r.ok) throw new Error(r.status === 404 ? 'No se encontró el pago.' : 'No se pudo consultar el estado.');
       const data = await r.json();
       setError('');
       setPayment(data);
-      if (data.status !== 'PENDING') setFin((t) => t ?? Date.now());
+      setRecibidoEn(Date.now());
       return data;
     } catch (err) {
       setError(err.message);
@@ -67,14 +63,17 @@ export default function Resultado() {
     };
   }, [ref, ciclo]);
 
-  // El reloj corre desde la primera petición hasta que el estado deja de ser pendiente
+  // Intentos y tiempo los lleva el servidor; el reloj avanza localmente hasta recibir el estado definitivo
+  const corriendo = payment && !payment.resolved;
   useEffect(() => {
-    if (!inicio || fin) return;
+    if (!corriendo) return;
     const id = setInterval(() => setAhora(Date.now()), 1000);
     return () => clearInterval(id);
-  }, [inicio, fin]);
+  }, [corriendo]);
 
-  const segundos = inicio ? Math.max(0, Math.round(((fin ?? ahora) - inicio) / 1000)) : 0;
+  const segundos = payment
+    ? Math.max(0, Math.round((payment.elapsed_ms + (corriendo ? ahora - recibidoEn : 0)) / 1000))
+    : 0;
 
   const [titulo, clase] = payment ? texto[payment.status] ?? [`Estado: ${payment.status}`, 'info'] : [];
 
@@ -99,10 +98,10 @@ export default function Resultado() {
           {payment.status === 'PENDING' && !payment.requiresManualCheck && <p>Estamos esperando la confirmación de tu pago…</p>}
         </section>
       )}
-      {consultas > 0 && (
+      {payment && (
         <p className="metricas">
-          Intentos: <strong>{consultas}</strong> · Tiempo transcurrido: <strong>{segundos} s</strong>
-          {fin ? ' (estado recibido)' : ''}
+          Intentos: <strong>{payment.attempts}</strong> · Tiempo transcurrido: <strong>{segundos} s</strong>
+          {payment.resolved ? ' (estado recibido)' : ''}
         </p>
       )}
       <p><a href="/">Volver al inicio</a></p>

@@ -80,7 +80,7 @@ function Home() {
         ) : (
           <table>
             <thead>
-              <tr><th>Nombre</th><th>Descripción</th><th>Valor</th><th>Estado</th></tr>
+              <tr><th>Nombre</th><th>Descripción</th><th>Valor</th><th>Estado</th><th>Intentos</th><th>Tiempo</th></tr>
             </thead>
             <tbody>
               {payments.map((p) => (
@@ -89,6 +89,8 @@ function Home() {
                   <td>{p.description}</td>
                   <td>{Number(p.price).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}</td>
                   <td>{p.status}</td>
+                  <td>{p.attempts || '-'}</td>
+                  <td>{p.resolved ? `${Math.round(p.elapsed_ms / 1000)} s` : '-'}</td>
                 </tr>
               ))}
             </tbody>
