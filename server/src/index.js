@@ -41,7 +41,7 @@ const STATUS = `CASE WHEN status = 'PENDING' AND transaction_id IS NULL AND COAL
 // Métricas de la consulta de estado: intentos y ms desde la primera consulta hasta el estado definitivo
 const METRICS = `check_attempts AS attempts,
   CASE WHEN first_check_at IS NULL THEN NULL
-       ELSE (EXTRACT(EPOCH FROM (COALESCE(resolved_at, now()) - first_check_at)) * 1000)::bigint END AS elapsed_ms,
+       ELSE (EXTRACT(EPOCH FROM (COALESCE(resolved_at, now()) - first_check_at)) * 1000)::int END AS elapsed_ms,
   resolved_at IS NOT NULL AS resolved`;
 
 // BeMovil informa estados en español (p. ej. PENDIENTE); todo lo pendiente/en proceso no es definitivo

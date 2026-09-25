@@ -90,7 +90,7 @@ function Home() {
                   <td>{Number(p.price).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}</td>
                   <td>{p.status}</td>
                   <td>{p.attempts || '-'}</td>
-                  <td>{p.resolved ? `${(p.elapsed_ms / 1000).toFixed(1)} s` : '-'}</td>
+                  <td>{p.resolved ? `${(Number(p.elapsed_ms) / 1000).toFixed(1)} s` : '-'}</td>
                 </tr>
               ))}
             </tbody>

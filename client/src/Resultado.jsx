@@ -78,7 +78,7 @@ export default function Resultado() {
   }, [corriendo]);
 
   const segundos = payment
-    ? (Math.max(0, payment.elapsed_ms + (corriendo ? ahora - recibidoEn : 0)) / 1000).toFixed(1)
+    ? (Math.max(0, Number(payment.elapsed_ms) + (corriendo ? ahora - recibidoEn : 0)) / 1000).toFixed(1)
     : 0;
 
   const [titulo, clase] = payment ? texto[payment.status] ?? [`Estado: ${payment.status}`, 'info'] : [];
