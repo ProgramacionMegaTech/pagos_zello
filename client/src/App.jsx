@@ -23,8 +23,6 @@ function Home() {
     e.preventDefault();
     setLoading(true);
     setError('');
-    // Se abre la pestaña en el click (antes del await) para que el navegador no la bloquee
-    const tab = window.open('', '_blank');
     try {
       const r = await fetch(`${API}/api/payments`, {
         method: 'POST',
@@ -35,10 +33,8 @@ function Home() {
       if (!r.ok) throw new Error(data.error || 'Error');
       console.log('Respuesta de BeMovil:', data.bemovil);
       setForm(empty);
-      if (tab) tab.location.href = data.checkout_url;
-      else window.location.href = data.checkout_url;
+      window.location.href = data.checkout_url; // misma pestaña
     } catch (err) {
-      tab?.close();
       setError(err.message);
     } finally {
       setLoading(false);
