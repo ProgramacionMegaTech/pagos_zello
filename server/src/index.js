@@ -35,7 +35,7 @@ function logWebhook(req, valid, extra = {}) {
 }
 
 // Un pago PENDING cuyo link ya venció se muestra como EXPIRADO
-const STATUS = `CASE WHEN status = 'PENDING' AND COALESCE(expires_at, created_at + interval '15 minutes') < now()
+const STATUS = `CASE WHEN status = 'PENDING' AND transaction_id IS NULL AND COALESCE(expires_at, created_at + interval '15 minutes') < now()
   THEN 'EXPIRADO' ELSE status END AS status`;
 
 // Métricas de la consulta de estado: intentos y ms desde la primera consulta hasta el estado definitivo
@@ -43,6 +43,9 @@ const METRICS = `check_attempts AS attempts,
   CASE WHEN first_check_at IS NULL THEN NULL
        ELSE (EXTRACT(EPOCH FROM (COALESCE(resolved_at, now()) - first_check_at)) * 1000)::bigint END AS elapsed_ms,
   resolved_at IS NOT NULL AS resolved`;
+
+// BeMovil informa estados en español (p. ej. PENDIENTE); todo lo pendiente/en proceso no es definitivo
+const isPending = (status) => /PEND|PROCES/.test(status);
 
 const app = express();
 app.use(cors({ origin: CLIENT_URL }));
@@ -158,17 +161,20 @@ app.post('/api/payments/ref/:ref/check', async (req, res) => {
   }
 
   const current = (await pool.query(`SELECT ${STATUS} FROM payments WHERE id = $1`, [found.id])).rows[0].status;
-  // Estado definitivo recibido: se detiene el cronómetro (solo la primera vez)
-  if (current !== 'PENDING') {
-    await pool.query('UPDATE payments SET resolved_at = COALESCE(resolved_at, now()) WHERE id = $1', [found.id]);
-  }
+  // Estado definitivo: se detiene el cronómetro (solo la primera vez); si sigue pendiente, sigue corriendo
+  await pool.query(
+    isPending(current)
+      ? 'UPDATE payments SET resolved_at = NULL WHERE id = $1'
+      : 'UPDATE payments SET resolved_at = COALESCE(resolved_at, now()) WHERE id = $1',
+    [found.id],
+  );
   const { rows } = await pool.query(
     `SELECT name, description, price, ${STATUS}, ${METRICS}, updated_at FROM payments WHERE id = $1`,
     [found.id],
   );
   const status = rows[0].status;
   // Nequi Push (11): el usuario aprueba en su celular y debe confirmar para volver a consultar
-  const requiresManualCheck = paymentMethodId === 11 && /PEND|PROCES/.test(status);
+  const requiresManualCheck = paymentMethodId === 11 && isPending(status);
   res.json({ ...rows[0], paymentMethodId, requiresManualCheck });
 });
 

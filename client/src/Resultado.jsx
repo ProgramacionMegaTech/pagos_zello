@@ -3,9 +3,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
 const INTERVALO_MS = 3000;
 
+// BeMovil informa estados en español (p. ej. PENDIENTE); todo lo pendiente/en proceso no es definitivo
+const esPendiente = (status) => /PEND|PROCES/.test(status);
+
 const texto = {
   APROBADA: ['Pago aprobado', 'ok'],
   PENDING: ['Pago en proceso', 'wait'],
+  PENDIENTE: ['Pago pendiente', 'wait'],
   RECHAZADA: ['Pago rechazado', 'fail'],
   EXPIRADO: ['El link de pago expiró', 'fail'],
 };
@@ -49,7 +53,7 @@ export default function Resultado() {
     const data = await consultar();
     if (!activo.current || noEncontrado.current) return;
     if (data) {
-      if (data.status !== 'PENDING') return;
+      if (!esPendiente(data.status)) return;
       if (data.requiresManualCheck && !confirmado) return;
     }
     timer.current = setTimeout(() => ciclo(confirmado), INTERVALO_MS);
@@ -69,12 +73,12 @@ export default function Resultado() {
   const corriendo = payment && !payment.resolved;
   useEffect(() => {
     if (!corriendo) return;
-    const id = setInterval(() => setAhora(Date.now()), 1000);
+    const id = setInterval(() => setAhora(Date.now()), 100);
     return () => clearInterval(id);
   }, [corriendo]);
 
   const segundos = payment
-    ? Math.max(0, Math.round((payment.elapsed_ms + (corriendo ? ahora - recibidoEn : 0)) / 1000))
+    ? (Math.max(0, payment.elapsed_ms + (corriendo ? ahora - recibidoEn : 0)) / 1000).toFixed(1)
     : 0;
 
   const [titulo, clase] = payment ? texto[payment.status] ?? [`Estado: ${payment.status}`, 'info'] : [];
@@ -103,7 +107,7 @@ export default function Resultado() {
               )}
             </>
           )}
-          {payment.status === 'PENDING' && !payment.requiresManualCheck && <p>Estamos esperando la confirmación de tu pago…</p>}
+          {esPendiente(payment.status) && !payment.requiresManualCheck && <p>Estamos esperando la confirmación de tu pago…</p>}
         </section>
       )}
       {payment && (
