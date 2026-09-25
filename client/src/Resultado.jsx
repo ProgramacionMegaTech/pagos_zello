@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 const API = import.meta.env.VITE_API_URL ?? 'http://localhost:4000';
-const MAX_INTENTOS = 20; // ~1 min de consulta automática
+const INTERVALO_MS = 3000;
 
 const texto = {
   APROBADA: ['Pago aprobado', 'ok'],
@@ -15,9 +15,10 @@ export default function Resultado() {
   const [payment, setPayment] = useState(null);
   const [error, setError] = useState(ref ? '' : 'Falta la referencia del pago.');
   const [checking, setChecking] = useState(false);
+  const [confirmado, setConfirmado] = useState(false); // Nequi: el usuario ya confirmó, se consulta sin parar
   const [recibidoEn, setRecibidoEn] = useState(0); // cuándo llegó la última respuesta (para el reloj local)
   const [ahora, setAhora] = useState(() => Date.now());
-  const intentos = useRef(0);
+  const noEncontrado = useRef(false);
   const timer = useRef();
   const activo = useRef(true);
 
@@ -26,6 +27,7 @@ export default function Resultado() {
     setChecking(true);
     try {
       const r = await fetch(`${API}/api/payments/ref/${encodeURIComponent(ref)}/check`, { method: 'POST' });
+      noEncontrado.current = r.status === 404;
       if (!r.ok) throw new Error(r.status === 404 ? 'No se encontró el pago.' : 'No se pudo consultar el estado.');
       const data = await r.json();
       setError('');
@@ -39,18 +41,18 @@ export default function Resultado() {
     }
   }, [ref]);
 
-  // Consulta y reintenta cada 3 s (~1 min) mientras siga pendiente.
-  // En la carga inicial, Nequi Push (requiresManualCheck) espera a que el usuario confirme;
-  // con "Ya realicé el pago" (confirmado = true) sí se reintenta solo.
+  // Consulta cada 3 s hasta que el estado deje de ser pendiente (el link vence a los 15 min, y entonces
+  // pasa a EXPIRADO). Un fallo de red se reintenta. En la carga inicial, Nequi Push
+  // (requiresManualCheck) espera a que el usuario confirme con "Ya realicé el pago".
   const ciclo = useCallback(async (confirmado = false) => {
     clearTimeout(timer.current);
-    if (confirmado) intentos.current = 0;
     const data = await consultar();
-    if (!data || !activo.current) return;
-    if (data.requiresManualCheck && !confirmado) return;
-    if (data.status === 'PENDING' && ++intentos.current < MAX_INTENTOS) {
-      timer.current = setTimeout(() => ciclo(confirmado), 3000);
+    if (!activo.current || noEncontrado.current) return;
+    if (data) {
+      if (data.status !== 'PENDING') return;
+      if (data.requiresManualCheck && !confirmado) return;
     }
+    timer.current = setTimeout(() => ciclo(confirmado), INTERVALO_MS);
   }, [consultar]);
 
   useEffect(() => {
@@ -89,10 +91,16 @@ export default function Resultado() {
           <p>{Number(payment.price).toLocaleString('es-CO', { style: 'currency', currency: 'COP', maximumFractionDigits: 0 })}</p>
           {payment.requiresManualCheck && (
             <>
-              <p>Aprueba el pago en tu celular (Nequi) y, cuando lo hayas hecho, confirma aquí. Consultaremos el estado cada pocos segundos.</p>
-              <button onClick={() => ciclo(true)} disabled={checking}>
-                {checking ? 'Consultando…' : 'Ya realicé el pago'}
-              </button>
+              {confirmado ? (
+                <p>Consultando el estado hasta recibir la respuesta…</p>
+              ) : (
+                <>
+                  <p>Aprueba el pago en tu celular (Nequi) y, cuando lo hayas hecho, confirma aquí.</p>
+                  <button onClick={() => { setConfirmado(true); ciclo(true); }} disabled={checking}>
+                    Ya realicé el pago
+                  </button>
+                </>
+              )}
             </>
           )}
           {payment.status === 'PENDING' && !payment.requiresManualCheck && <p>Estamos esperando la confirmación de tu pago…</p>}
