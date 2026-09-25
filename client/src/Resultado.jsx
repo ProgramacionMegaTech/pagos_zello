@@ -27,10 +27,10 @@ export default function Resultado() {
   const activo = useRef(true);
 
   // Consulta el estado de la transacción en BeMovil
-  const consultar = useCallback(async () => {
+  const consultar = useCallback(async (confirmado = false) => {
     setChecking(true);
     try {
-      const r = await fetch(`${API}/api/payments/ref/${encodeURIComponent(ref)}/check`, { method: 'POST' });
+      const r = await fetch(`${API}/api/payments/ref/${encodeURIComponent(ref)}/check${confirmado ? '?confirmed=1' : ''}`, { method: 'POST' });
       noEncontrado.current = r.status === 404;
       if (!r.ok) throw new Error(r.status === 404 ? 'No se encontró el pago.' : 'No se pudo consultar el estado.');
       const data = await r.json();
@@ -50,7 +50,7 @@ export default function Resultado() {
   // (requiresManualCheck) espera a que el usuario confirme con "Ya realicé el pago".
   const ciclo = useCallback(async (confirmado = false) => {
     clearTimeout(timer.current);
-    const data = await consultar();
+    const data = await consultar(confirmado);
     if (!activo.current || noEncontrado.current) return;
     if (data) {
       if (!esPendiente(data.status)) return;
@@ -110,7 +110,7 @@ export default function Resultado() {
           {esPendiente(payment.status) && !payment.requiresManualCheck && <p>Estamos esperando la confirmación de tu pago…</p>}
         </section>
       )}
-      {payment && (
+      {payment?.attempts > 0 && (
         <p className="metricas">
           Intentos: <strong>{payment.attempts}</strong> · Tiempo transcurrido: <strong>{segundos} s</strong>
           {payment.resolved ? ' (estado recibido)' : ''}

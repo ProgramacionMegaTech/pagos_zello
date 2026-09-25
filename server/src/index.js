@@ -127,14 +127,9 @@ async function applyStatus(payment, status, transactionId, matchedBy) {
 // Página de resultado: consulta el estado de la transacción en BeMovil (find) usando el _id (= ref)
 app.post('/api/payments/ref/:ref/check', async (req, res) => {
   const { ref } = req.params;
-  // Cada consulta cuenta como un intento; la primera marca el inicio del cronómetro
-  const found = (
-    await pool.query(
-      `UPDATE payments SET check_attempts = check_attempts + 1, first_check_at = COALESCE(first_check_at, now())
-       WHERE ref = $1 RETURNING id, status, transaction_id`,
-      [ref],
-    )
-  ).rows[0];
+  const startedAt = new Date(); // inicio del cronómetro si esta consulta llega a contar
+  const confirmed = req.query.confirmed === '1'; // el usuario pulsó "Ya realicé el pago" (Nequi)
+  const found = (await pool.query('SELECT id, status, transaction_id FROM payments WHERE ref = $1', [ref])).rows[0];
   if (!found) return res.status(404).json({ error: 'No encontrado' });
 
   let paymentMethodId = null;
@@ -161,6 +156,14 @@ app.post('/api/payments/ref/:ref/check', async (req, res) => {
   }
 
   const current = (await pool.query(`SELECT ${STATUS} FROM payments WHERE id = $1`, [found.id])).rows[0].status;
+  // Intentos y cronómetro: cada consulta cuenta y la primera inicia el reloj. Con Nequi Push (11)
+  // pendiente solo cuentan las consultas posteriores a la confirmación del usuario.
+  if (confirmed || !(paymentMethodId === 11 && isPending(current))) {
+    await pool.query(
+      'UPDATE payments SET check_attempts = check_attempts + 1, first_check_at = COALESCE(first_check_at, $2) WHERE id = $1',
+      [found.id, startedAt],
+    );
+  }
   // Estado definitivo: se detiene el cronómetro (solo la primera vez); si sigue pendiente, sigue corriendo
   await pool.query(
     isPending(current)
